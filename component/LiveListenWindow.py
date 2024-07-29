@@ -5,10 +5,10 @@ from tkinter import Toplevel, messagebox, Button
 from tkinter.ttk import Treeview
 from util.Pool import getRedisConn
 from util.Spider import Spider
-from util.threadhelper import createThread
 
 
 class LiveListenWindow(Toplevel):
+
     def __init__(self, master=None, **kwargs):
         super().__init__(master=master, **kwargs)
         self.master = master
@@ -19,6 +19,8 @@ class LiveListenWindow(Toplevel):
         self.title('直播间弹幕采集')
         self.focus_get()
         Button(self, text='采集结束', command=self.close).pack()
+        self.threadList = {}
+        self.queueList = {}
 
     def show(self, liveId='', userDictFile='', opera=0):
         self.liveId = liveId
@@ -32,28 +34,10 @@ class LiveListenWindow(Toplevel):
         for i in range(len(columns)):
             self.treeview.heading(columns[i], text=columns[i])
             self.treeview.column(columns[i], anchor='center')
-        # time.sleep()
-        q = queue.Queue()
-        spider = Spider(master=self.treeview, liveId=liveId, userDictFile=userDictFile)
-        createThread(Spider.start, name="爬取弹幕信息", args=(spider, q,))
-        createThread(LiveListenWindow.listen, name="监听爬取的弹幕信息", args=(q, liveId))
-        # spider = Spider(master=self.treeview, liveId=liveId, userDictFile=userDictFile)
-        # st = spider.thread(queue=q)
-        # threads.append(st)
-        # tSpider = Thread(target=spider.start, name=liveId, args=(spider, q,))
-        # threads.append(tSpider)
-
-        # tRefreshTreeView = Thread(target=self.listen, name="监听爬取的弹幕信息", args=(q, liveId))
-        # threads.append(tRefreshTreeView)
-        #
-        # for i in threads:
-        #     i.setDaemon(True)
-        #     i.start()
-        #     print("{}启动了".format(i.name))
-        #
-        # for i in threads:
-        #     i.join()
-        q.join()
+        self.queueList[liveId] = q = queue.Queue()
+        spider = Spider(master=self.treeview, liveId=liveId, userDictFile=userDictFile, que=q)
+        self.threadList[liveId] = Thread(target=spider.start, name="爬取弹幕信息", args=()).start()
+        self.listen(q, liveId)
 
     def listen(self, q: queue.Queue, liveId=''):
         message = q.get()
@@ -68,13 +52,17 @@ class LiveListenWindow(Toplevel):
         redisClient.hset(hashKey, 'content', message['content'])
         redisClient.hset(hashKey, 'time', message['time'])
 
-        self.treeview.insert('', '0', values=(message['content'], message['id'], message['time']))
+        self.treeview.insert('', q.qsize(), values=(message['content'], message['id'], message['time']))
 
     def warning(self):
         if messagebox.showinfo('提示', '直播已经结束'):
             self.spidering = False
 
     def close(self):
+        for thread in self.threadList:
+            thread.join()
+        for queue in self.queueList:
+            queue.join()
         if self.spidering:
             if not messagebox.askyesno('销毁？', '正在采集，确定要退出吗？'):
                 return

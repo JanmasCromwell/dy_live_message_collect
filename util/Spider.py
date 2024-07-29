@@ -3,9 +3,9 @@
 
 import datetime
 import json
-import queue
 import random
 import threading
+from threading import Thread
 import time
 from threading import Timer
 from tkinter import Tk
@@ -20,12 +20,15 @@ from queue import Queue
 
 
 class Spider():
-    def __init__(self, master: Treeview, liveId='', userDictFile=''):
+    def __init__(self, master: Treeview, liveId='', userDictFile='', que: Queue = None, thread: Thread = None):
         self.liveId = liveId
         self.userDictFile = userDictFile
         self.master = master
+        self.queue = que
+        self.thread = thread
+        self.threadEvent = threading.Event()
 
-    def start(self, q: queue.Queue):
+    def start(self):
         if self.master.master:
             self.master.focus_force()
         liveId = self.liveId
@@ -44,18 +47,25 @@ class Spider():
         timer.start()
         print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "启动了")
         time.sleep(1)
-        while True:
+        while not self.threadEvent.is_set():
             if not self.master.master.spidering:
                 break
             try:
                 overEle = self.web.find_element(By.XPATH,
                                                 '//*[@id="_douyin_live_scroll_container_"]/div/div/div/div[2]/div[2]/div[2]/div')
                 if overEle.text == '直播已结束':
+                    self.threadEvent.set()
+                    self.thread.join()
+                    self.queue.join()
                     self.master.master.warning()
                     timer.cancel()
                     break
             except NoSuchElementException:
                 print('未获取到直播结束')
+                self.threadEvent.set()
+                self.thread.join()
+                self.queue.join()
+                break
                 # 弹窗
                 pass
             eles = self.web.find_elements(By.CLASS_NAME, 'webcast-chatroom___enter-done')
@@ -70,7 +80,7 @@ class Spider():
                             continue
                         # pushKey = 'dy:message:push:{}'.format(liveId)
                         message = json.dumps({"content": es.text, "time": time.time(), "id": id, "liveId": liveId})
-                        q.put(item=message)
+                        self.queue.put(item=message)
 
                         currentTime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         # print(currentTime, id, es.text)
